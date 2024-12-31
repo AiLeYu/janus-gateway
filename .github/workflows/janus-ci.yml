@@ -1,16 +1,15 @@
-name: Build Janus Gateway and Extract janus-pp-rec
+name: janus-ci
 
 on:
   push:
-    branches:
-      - master  # 当推送到 main 分支时触发构建
+    branches: [ master ]
   pull_request:
-    branches:
-      - master  # 在发起PR时也触发构建
-
+    branches: [ master ]
+permissions:
+  contents: read
 jobs:
   build:
-    runs-on: ubuntu-22.04  # 使用最新的 Ubuntu 环境进行构建
+    runs-on: ubuntu-22.04
     strategy:
       matrix:
         compiler: [gcc, clang]
@@ -34,14 +33,8 @@ jobs:
             libcurl: "no"
     env:
         CC: ${{ matrix.compiler }}
-        
     steps:
-    # Step 1: 检出代码
-    - name: Checkout code
-      uses: actions/checkout@v3
-
-    # Step 2: 安装依赖
-    - name: Install dependencies
+    - name: install janus apt dependencies
       run: >
         sudo apt-get update && sudo apt-get --no-install-recommends -y install
         autoconf
@@ -86,11 +79,10 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: '3.10'
-        architecture: 'x64'        
+        architecture: 'x64'
     - name: install python packages
       if: ${{ matrix.deps_from_src == 'yes' }}
       run: pip install wheel meson
-      
     - name: setup libnice from sources
       if: ${{ matrix.deps_from_src == 'yes' }}
       run: |
@@ -99,21 +91,73 @@ jobs:
         if [ $CC = clang ]; then LNICE_CFLAGS="-Wno-cast-align"; fi;
         meson setup -Dprefix=/usr -Dlibdir=lib -Dc_args="$LNICE_CFLAGS" -Ddebug=false -Doptimization=0 -Dexamples=disabled -Dgtk_doc=disabled -Dgupnp=disabled -Dgstreamer=disabled -Dtests=disabled build
         ninja -C build
-        sudo ninja -C build install    
-        
-    # Step 3: 编译 Janus Gateway
-    - name: Compile Janus Gateway
+        sudo ninja -C build install
+    - name: checkout libsrtp source
+      if: ${{ matrix.deps_from_src == 'yes' }}
+      uses: actions/checkout@v3
+      with:
+        repository: cisco/libsrtp
+        ref: v2.6.0
+    - name: setup libsrtp from sources
+      if: ${{ matrix.deps_from_src == 'yes' }}
       run: |
-        # 克隆 Janus Gateway 项目（如果未提前在 GitHub 上克隆）
-        git clone https://github.com/meetecho/janus-gateway.git
-        cd janus-gateway
-        
-        # 运行自动生成工具
+        ./configure --prefix=/usr --enable-openssl
+        make -j$(nproc) shared_library
+        sudo make install
+    - name: checkout usrsctp source
+      if: ${{ matrix.datachannels == 'yes' && matrix.deps_from_src == 'yes' }}
+      uses: actions/checkout@v3
+      with:
+        repository: sctplab/usrsctp
+        ref: master
+    - name: setup usrsctp from sources
+      if: ${{ matrix.datachannels == 'yes' && matrix.deps_from_src == 'yes' }}
+      run: |
+        ./bootstrap
+        ./configure --prefix=/usr --disable-static --disable-debug --disable-programs --disable-inet --disable-inet6
+        make -j$(nproc)
+        sudo make install
+    - name: checkout lws source
+      if: ${{ matrix.deps_from_src == 'yes' }}
+      uses: actions/checkout@v3
+      with:
+        repository: warmcat/libwebsockets
+        ref: v4.3.2
+    - name: setup lws from sources
+      if: ${{ matrix.deps_from_src == 'yes' }}
+      run: |
+        mkdir -p build
+        pushd build
+        cmake -DCMAKE_INSTALL_PREFIX:PATH=/usr -DLWS_WITH_STATIC=OFF -DLWS_WITHOUT_CLIENT=ON -DLWS_WITHOUT_TESTAPPS=ON -DLWS_WITHOUT_TEST_SERVER=ON -DLWS_WITH_HTTP2=OFF ..
+        make -j$(nproc)
+        sudo make install
+    - name: checkout paho-mqtt source
+      if: ${{ matrix.deps_from_src == 'yes' }}
+      uses: actions/checkout@v3
+      with:
+        repository: eclipse/paho.mqtt.c
+        ref: v1.3.12
+    - name: setup paho-mqtt from sources
+      if: ${{ matrix.deps_from_src == 'yes' }}
+      run: |
+        cmake -DCMAKE_INSTALL_PREFIX:PATH=/usr -DPAHO_WITH_SSL=TRUE -DPAHO_BUILD_SAMPLES=FALSE -DPAHO_BUILD_DOCUMENTATION=FALSE .
+        make -j$(nproc)
+        sudo make install
+    - name: checkout janus source
+      uses: actions/checkout@v3
+    - name: build janus from sources
+      env:
+        JANUS_CONFIG_COMMON: "--disable-docs --enable-post-processing --enable-plugin-lua --enable-plugin-duktape --enable-json-logger"
+        JANUS_CONFIG_OPTS: ${{ matrix.janus_config_opts }}
+      # Asan in llvm 14 provided in ubuntu 22.04 is incompatible with
+      # high-entropy ASLR in much newer kernels that GitHub runners are
+      # using leading to random crashes: https://reviews.llvm.org/D148280
+      run: |
+        sudo sysctl vm.mmap_rnd_bits=28
         ./autogen.sh
-        
-        # 配置并编译
-        ./configure
-        make
+        ./configure $JANUS_CONFIG_COMMON $JANUS_CONFIG_OPTS
+        make -j$(nproc)
+        make check-fuzzers
 
     # Step 4: 查找并提取 janus-pp-rec 文件
     - name: Find and upload janus-pp-rec file
@@ -135,3 +179,32 @@ jobs:
       with:
         name: janus-pp-rec
         path: ./janus-pp-rec
+        
+  javascript-lint:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install modules
+      run: |
+        cd npm
+        npm install
+    - name: Run ESLint
+      run: |
+        cd npm
+        npm run lint
+  javascript-dist:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install modules
+      run: |
+        cd npm
+        npm install
+    - name: Make dist files
+      run: |
+        cd npm
+        npm run prerelease
+    - uses: actions/upload-artifact@v4
+      with:
+        name: janus.es.js
+        path: npm/dist/janus.es.js
