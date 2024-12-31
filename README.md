@@ -15,7 +15,7 @@ If you have questions on Janus, or wish to discuss Janus with us and other users
 
 
 ## Dependencies
-To install it, you'll need to satisfy the following dependencies:
+To install it, you'll need to satisfy the following dependencies:1
 
 * [GLib](https://docs.gtk.org/glib/)
 * [zlib](https://zlib.net/)
