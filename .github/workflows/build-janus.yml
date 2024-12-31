@@ -1,0 +1,73 @@
+name: Build Janus Gateway and Extract janus-pp-rec
+
+on:
+  push:
+    branches:
+      - main  # 当推送到 main 分支时触发构建
+  pull_request:
+    branches:
+      - main  # 在发起PR时也触发构建
+
+jobs:
+  build:
+    runs-on: ubuntu-latest  # 使用最新的 Ubuntu 环境进行构建
+
+    steps:
+    # Step 1: 检出代码
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # Step 2: 安装依赖
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          git \
+          pkg-config \
+          libmicrohttpd-dev \
+          libssl-dev \
+          libcurl4-openssl-dev \
+          libjansson-dev \
+          libsofia-sip-ua-dev \
+          libsrtp2-dev \
+          libconfig-dev \
+          libwebsockets-dev \
+          libtool \
+          autoconf \
+          automake
+
+    # Step 3: 编译 Janus Gateway
+    - name: Compile Janus Gateway
+      run: |
+        # 克隆 Janus Gateway 项目（如果未提前在 GitHub 上克隆）
+        git clone https://github.com/meetecho/janus-gateway.git
+        cd janus-gateway
+        
+        # 运行自动生成工具
+        ./autogen.sh
+        
+        # 配置并编译
+        ./configure
+        make
+
+    # Step 4: 查找并提取 janus-pp-rec 文件
+    - name: Find and upload janus-pp-rec file
+      run: |
+        # 查找 janus-pp-rec 文件
+        find . -type f -name "janus-pp-rec" > janus-pp-rec-path.txt
+        
+        # 将 janus-pp-rec 文件路径输出到 GitHub Actions 日志
+        cat janus-pp-rec-path.txt
+        
+        # 上传 janus-pp-rec 文件作为构建产物
+        if [ -f "$(cat janus-pp-rec-path.txt)" ]; then
+          cp "$(cat janus-pp-rec-path.txt)" ./janus-pp-rec
+        fi
+
+    # Step 5: 上传构建的 janus-pp-rec 文件
+    - name: Upload janus-pp-rec artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: janus-pp-rec
+        path: ./janus-pp-rec
