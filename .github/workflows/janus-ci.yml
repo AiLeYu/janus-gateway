@@ -3,10 +3,10 @@ name: Build Janus Gateway and Extract janus-pp-rec
 on:
   push:
     branches:
-      - main  # 当推送到 main 分支时触发构建
+      - master  # 当推送到 main 分支时触发构建
   pull_request:
     branches:
-      - main  # 在发起PR时也触发构建
+      - master  # 在发起PR时也触发构建
 
 jobs:
   build:
